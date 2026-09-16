@@ -13,12 +13,24 @@ import { challenges } from '../data/datacache'
 import * as security from '../lib/insecurity'
 import * as utils from '../lib/utils'
 
+function hasBreakoutPayload (data: string): boolean {
+  const decoded = data
+    .replace(/\\u\{([0-9a-fA-F]+)\}/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+  const pattern = /constructor|__proto__|prototype|process|mainModule|require|child_process|\bFunction\b|\beval\b|\bglobal\b|globalThis/i
+  return pattern.test(data) || pattern.test(decoded)
+}
+
 export function b2bOrder () {
   return ({ body }: Request, res: Response, next: NextFunction) => {
     if (utils.isChallengeEnabled(challenges.rceChallenge) || utils.isChallengeEnabled(challenges.rceOccupyChallenge)) {
       const orderLinesData = body.orderLinesData || ''
       try {
-        const sandbox = { safeEval, orderLinesData }
+        if (typeof orderLinesData !== 'string' || hasBreakoutPayload(orderLinesData)) {
+          throw new Error('Sandbox breakout detected')
+        }
+        const sandbox = { safeEval: (code: string) => safeEval(code, Object.create(null)), orderLinesData }
         vm.createContext(sandbox)
         vm.runInContext('safeEval(orderLinesData)', sandbox, { timeout: 2000 })
         res.json({ cid: body.cid, orderNo: uniqueOrderNumber(), paymentDue: dateTwoWeeksFromNow() })
